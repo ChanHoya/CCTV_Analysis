@@ -1,0 +1,13 @@
+# 자체 호스팅 실행: docker compose up -d → http://localhost:8501
+# 영상/모델/DB는 호스트 볼륨에 보관(원본 외부전송 없음, 개인정보 §1.1).
+services:
+  cctv-analyzer:
+    build: .
+    container_name: cctv-analyzer
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data       # 원본/클립/썸네일/DB (호스트에 영속)
+      - ./models:/app/models   # YOLO 가중치 캐시
+      - ./config.yaml:/app/config.yaml:ro
+    restart: unless-stopped

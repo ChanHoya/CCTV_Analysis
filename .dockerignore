@@ -1,0 +1,11 @@
+.venv/
+data/
+models/
+tests/fixtures/*.mp4
+tests/fixtures/*.avi
+tests/fixtures/*.mov
+tests/fixtures/*.mkv
+__pycache__/
+*.pyc
+.env
+.git/

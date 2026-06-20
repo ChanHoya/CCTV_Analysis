@@ -1,0 +1,52 @@
+# config.yaml — 모든 튜닝 파라미터의 단일 출처 (AGENTS.md §1.3: 매직 넘버 금지)
+# 코드에서는 src/config.py 로더를 통해서만 이 값을 읽는다.
+
+paths:
+  uploads: data/uploads   # 원본 영상
+  clips: data/clips       # 모션 클립
+  thumbs: data/thumbs     # 썸네일
+  db: data/db/events.db   # SQLite 파일
+  models: models          # YOLO 가중치 캐시
+
+motion:
+  # DVR-Scan -t/--threshold: 낮을수록 민감. 실제 영상으로 튜닝.
+  threshold: 0.15
+  # 최소 이벤트 길이(프레임). 짧은 깜빡임/오탐 억제. (DVR-Scan --min-event-length)
+  min_event_length: 2
+  # 이벤트 전후로 덧붙일 프레임 수 (DVR-Scan -tb/--time-before-event, -tp/--time-post-event)
+  time_before_event: 1.0   # 초
+  time_post_event: 1.0     # 초
+  # ROI. 비우면 전체 화면. DVR-Scan -a는 3점 이상 다각형(좌상단 0,0 기준).
+  # 형식: 다각형 리스트, 각 다각형은 점들을 평탄화한 좌표열 [x0,y0,x1,y1,x2,y2,...]
+  # 예: [[0,0, 320,0, 320,240, 0,240]]  # 전체 사각형 영역 1개
+  regions: []
+  # --- 견고화/오탐 억제 (Phase 8) ---
+  # 노이즈 제거 커널 크기(px). 홀수>1, 0=비활성, -1=해상도 기반 자동. (DVR-Scan -k)
+  # 야외 비/그림자/흔들림 오탐 억제에 효과. 너무 크면 작은 움직임 놓침.
+  kernel_size: -1
+  # 처리 전 다운스케일 정수 배수. 0/1=원본. 대용량/고해상도 영상 속도·메모리 절감. (DVR-Scan -df)
+  downscale_factor: 0
+  # 배경 차분기: MOG2(기본) | CNT(병렬, 빠름). (DVR-Scan -b)
+  bg_subtractor: MOG2
+
+detect:
+  model: yolo11n.pt        # AGENTS.md §1.2: 확실히 존재하는 가중치. YOLO26 사용 시 문서 확인 후 변경.
+  sample_fps: 1.0          # 모션 클립을 초당 N프레임으로 샘플링 (1~2 권장)
+  classes: [0]             # COCO class id. 0=person. 차량 확장 시 [0,2,3,5,7] 등.
+  conf: 0.35               # 탐지 신뢰도 임계값
+  device: auto             # auto | cpu | cuda | mps. GPU 미가용 시 cpu fallback.
+
+ingest:
+  # ffprobe로 추출한 코덱이 아래 목록이 아니면 표준 MP4(H.264)로 정규화
+  standard_codecs: [h264]
+  standard_container: mp4
+  # 처리 후 정규화 중간 파일(*.normalized.mp4) 삭제 — 디스크 절약 (Phase 8)
+  cleanup_normalized: true
+
+notify:
+  enabled: false
+  webhook_url_env: N8N_WEBHOOK_URL  # 실제 URL은 .env의 이 키에서 읽음
+  cooldown_sec: 300                 # 동일 영상 알림 쿨다운(스팸 방지)
+
+logging:
+  level: INFO

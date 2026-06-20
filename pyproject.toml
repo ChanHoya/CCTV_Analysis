@@ -1,0 +1,27 @@
+[project]
+name = "cctv-motion-analyzer"
+version = "0.1.0"
+description = "Local-first CCTV motion extraction + object detection (DVR-Scan + YOLO cascade)"
+requires-python = ">=3.11"
+dependencies = [
+    "dvr-scan[opencv]>=1.6",
+    "ultralytics>=8.3",
+    "opencv-python>=4.10",
+    "pyyaml>=6.0",
+    "streamlit>=1.40",
+]
+
+[project.optional-dependencies]
+# 서버/헤드리스 환경: GUI 의존이 없는 dvr-scan
+headless = ["dvr-scan-headless>=1.6"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["src"]
+
+[tool.pyright]
+# 모듈은 `python -m src.x`로 프로젝트 루트에서 실행 → 루트를 import 경로로 인식
+extraPaths = ["."]

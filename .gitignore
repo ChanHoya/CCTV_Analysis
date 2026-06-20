@@ -1,0 +1,25 @@
+# 시크릿
+.env
+
+# 데이터(원본/클립/썸네일/DB) — 외부 유출 금지, 커밋 금지 (AGENTS.md §1.1, §7)
+data/uploads/
+data/clips/
+data/thumbs/
+data/db/
+
+# 모델 가중치 캐시
+models/
+
+# 테스트 픽스처(영상) — 코드만 커밋, 영상은 로컬
+tests/fixtures/*.mp4
+tests/fixtures/*.mov
+tests/fixtures/*.avi
+tests/fixtures/*.mkv
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/

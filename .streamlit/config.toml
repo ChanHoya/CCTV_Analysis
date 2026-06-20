@@ -1,0 +1,13 @@
+# Streamlit 웹 서버 설정 (자체 호스팅 / 로컬·LAN)
+[server]
+headless = true
+address = "0.0.0.0"     # LAN 내 다른 기기에서 접속 허용 (외부 공개 X)
+port = 8501
+maxUploadSize = 2048    # MB — CCTV 대용량 영상 업로드 허용(2GB)
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats = false   # 사용 통계 외부 전송 끄기 (개인정보 §1.1)
+
+[theme]
+base = "dark"
