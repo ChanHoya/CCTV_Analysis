@@ -358,7 +358,7 @@ with main_col:
                         st.markdown(
                             f"<div style='font-size:0.85rem;font-weight:600;color:#cbd5e1;"
                             f"margin-bottom:6px;'>탐지 객체 ({len(dets)}건)</div>"
-                            f"<div style='height:420px;overflow-y:auto;border:1px solid #1e293b;"
+                            f"<div style='height:580px;overflow-y:auto;border:1px solid #1e293b;"
                             f"border-radius:6px;padding:8px;'>{rows_html}</div>",
                             unsafe_allow_html=True,
                         )
