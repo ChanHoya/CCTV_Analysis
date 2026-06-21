@@ -1,7 +1,7 @@
-"""Detect — 모션 클립을 샘플링해 YOLO로 객체 탐지(사람/차량 등).
+"""Detect — 원본 영상 구간을 샘플링해 YOLO로 객체 탐지.
 
-AGENTS.md §3: ultralytics 의존은 이 모듈에만 격리(라이선스 분리, 교체 용이).
-AGENTS.md §1.2: 가중치는 확실히 존재하는 `yolo11n.pt` 기본. 클래스 0=사람(COCO).
+핵심 로직: 배경 차분(MOG2) 마스크와 YOLO 바운딩 박스를 결합하여
+실제로 움직이는 객체만 탐지 — 정지한 배경 인물/차량은 제외.
 """
 
 from __future__ import annotations
@@ -17,61 +17,163 @@ from src.config import Config
 
 logger = logging.getLogger(__name__)
 
+MOTION_RATIO_MIN = 0.04   # bbox 픽셀 중 최소 4%가 전경(움직임) 픽셀이어야 탐지 인정
+WARMUP_SEC = 4.0           # 이벤트 시작 전 배경 모델 워밍업 시간(초)
+
 
 @dataclass(frozen=True)
 class DetectionEvent:
-    clip_path: Path
-    t_sec: float       # 클립 내 시각
+    clip_path: Path     # 실제로는 원본 영상 경로
+    t_sec: float        # 이벤트 내 상대 시각
     class_id: int
     class_name: str
-    n: int             # 해당 프레임에서 그 클래스 탐지 개수
-    conf: float        # 그 클래스 최대 신뢰도
+    n: int
+    conf: float
 
 
 def _resolve_device(device: str) -> str:
-    """config의 device를 실제 사용 가능한 장치로 해석. GPU 미가용 시 cpu fallback."""
     import torch
-
     if device != "auto":
         return device
     if torch.cuda.is_available():
         return "cuda"
     if torch.backends.mps.is_available():
         return "mps"
-    logger.warning("GPU(cuda/mps) 미가용 → CPU로 fallback")
+    logger.warning("GPU(cuda/mps) 미가용 → CPU fallback")
     return "cpu"
 
 
 @lru_cache(maxsize=4)
 def _load_model(model_path: str):
-    """YOLO 모델 로드(캐시). 가중치 없으면 ultralytics가 자동 다운로드."""
     from ultralytics import YOLO
-
     return YOLO(model_path)
 
 
 def _model_for(cfg: Config):
-    """가중치를 models/ 디렉터리에 두고 로드.
-
-    전체 경로를 넘기면 ultralytics attempt_download_asset()이 알려진 자산명을
-    그 경로 그대로 다운로드한다(downloads.py:504-505 검증). 따라서 CWD 오염 없음.
-    """
     cfg.paths.models.mkdir(parents=True, exist_ok=True)
     weights = cfg.paths.models / cfg.detect.model
     return _load_model(str(weights))
 
 
+def _agg_from_result_motion_filtered(
+    result,
+    fg_mask,
+    video_path: Path,
+    t_sec: float,
+    names: dict,
+) -> list[DetectionEvent]:
+    """YOLO 결과에서 움직임 마스크와 겹치는 박스만 집계."""
+    boxes = result.boxes
+    if boxes is None or len(boxes) == 0:
+        return []
+
+    h, w = fg_mask.shape[:2]
+    agg: dict[int, tuple[int, float]] = {}
+
+    for box, cls_id, conf in zip(
+        boxes.xyxy.tolist(), boxes.cls.tolist(), boxes.conf.tolist()
+    ):
+        x1, y1, x2, y2 = int(box[0]), int(box[1]), int(box[2]), int(box[3])
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(w, x2), min(h, y2)
+        if x2 <= x1 or y2 <= y1:
+            continue
+
+        roi = fg_mask[y1:y2, x1:x2]
+        total_px = roi.size
+        if total_px == 0:
+            continue
+        motion_ratio = cv2.countNonZero(roi) / total_px
+
+        if motion_ratio < MOTION_RATIO_MIN:
+            continue  # 정지 객체 → 제외
+
+        cid = int(cls_id)
+        n, cmax = agg.get(cid, (0, 0.0))
+        agg[cid] = (n + 1, max(cmax, float(conf)))
+
+    return [
+        DetectionEvent(video_path, t_sec, cid, str(names.get(cid, cid)), n, round(cmax, 3))
+        for cid, (n, cmax) in agg.items()
+    ]
+
+
+def detect_segment(
+    video_path: Path,
+    start_sec: float,
+    end_sec: float,
+    cfg: Config,
+) -> list[DetectionEvent]:
+    """원본 영상의 start_sec~end_sec 구간에서 YOLO 탐지.
+
+    배경 차분 마스크(MOG2)를 함께 사용하여 정지 객체는 제외하고
+    실제로 움직이는 객체만 반환한다.
+    """
+    video_path = Path(video_path)
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        logger.warning("영상 열기 실패: %s", video_path)
+        return []
+
+    video_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    step = max(1, round(video_fps / cfg.detect.sample_fps))
+    start_frame = int(start_sec * video_fps)
+    end_frame = int(end_sec * video_fps)
+
+    # 배경 모델 워밍업: 이벤트 시작 전 WARMUP_SEC 초부터 처리
+    warmup_start = max(0, start_frame - int(WARMUP_SEC * video_fps))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, warmup_start)
+
+    bg_sub = cv2.createBackgroundSubtractorMOG2(
+        history=max(50, start_frame - warmup_start),
+        varThreshold=16,
+        detectShadows=False,
+    )
+
+    model = _model_for(cfg)
+    device = _resolve_device(cfg.detect.device)
+
+    events: list[DetectionEvent] = []
+    frame_idx = warmup_start
+
+    while frame_idx <= end_frame:
+        ok, frame = cap.read()
+        if not ok:
+            break
+
+        fg_mask = bg_sub.apply(frame)
+
+        if frame_idx >= start_frame and (frame_idx - start_frame) % step == 0:
+            t_sec = (frame_idx - start_frame) / video_fps
+            result = model.predict(
+                frame, classes=cfg.detect.classes, conf=cfg.detect.conf,
+                device=device, verbose=False,
+            )[0]
+            dets = _agg_from_result_motion_filtered(
+                result, fg_mask, video_path, t_sec, model.names
+            )
+            events.extend(dets)
+
+        frame_idx += 1
+
+    cap.release()
+    logger.info(
+        "탐지 %d건 (움직임 필터 적용): %s [%.1f–%.1f]s",
+        len(events), video_path.name, start_sec, end_sec,
+    )
+    return events
+
+
 def detect_clip(clip_path: Path, cfg: Config) -> list[DetectionEvent]:
-    """클립을 sample_fps로 샘플링해 탐지 이벤트 목록 반환. 탐지 없으면 빈 리스트."""
+    """클립 파일을 샘플링해 탐지 (움직임 필터 없음). 레거시 호환용."""
     clip_path = Path(clip_path)
     cap = cv2.VideoCapture(str(clip_path))
     if not cap.isOpened():
-        logger.warning("클립 열기 실패 건너뜀: %s", clip_path)
+        logger.warning("클립 열기 실패: %s", clip_path)
         return []
 
     video_fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
     if video_fps <= 0:
-        logger.warning("fps 미상 → 1로 가정: %s", clip_path)
         video_fps = 1.0
     step = max(1, round(video_fps / cfg.detect.sample_fps))
 
@@ -90,42 +192,17 @@ def detect_clip(clip_path: Path, cfg: Config) -> list[DetectionEvent]:
                 frame, classes=cfg.detect.classes, conf=cfg.detect.conf,
                 device=device, verbose=False,
             )[0]
-            events.extend(_events_from_result(result, clip_path, t_sec, model.names))
+            boxes = result.boxes
+            if boxes and len(boxes):
+                agg: dict[int, tuple[int, float]] = {}
+                for cid, conf in zip(boxes.cls.tolist(), boxes.conf.tolist()):
+                    n, cm = agg.get(int(cid), (0, 0.0))
+                    agg[int(cid)] = (n + 1, max(cm, float(conf)))
+                events.extend(
+                    DetectionEvent(clip_path, t_sec, cid, str(model.names.get(cid, cid)), n, round(cm, 3))
+                    for cid, (n, cm) in agg.items()
+                )
         frame_idx += 1
 
     cap.release()
-    logger.info("탐지 %d건: %s (step=%d, device=%s)", len(events), clip_path.name, step, device)
     return events
-
-
-def _events_from_result(result, clip_path: Path, t_sec: float, names: dict) -> list[DetectionEvent]:
-    """단일 프레임 결과를 클래스별로 집계해 이벤트 생성."""
-    boxes = result.boxes
-    if boxes is None or len(boxes) == 0:
-        return []
-
-    # 클래스별 개수/최대 신뢰도 집계
-    agg: dict[int, tuple[int, float]] = {}
-    for cls_id, conf in zip(boxes.cls.tolist(), boxes.conf.tolist()):
-        cid = int(cls_id)
-        n, cmax = agg.get(cid, (0, 0.0))
-        agg[cid] = (n + 1, max(cmax, float(conf)))
-
-    return [
-        DetectionEvent(clip_path, t_sec, cid, str(names.get(cid, cid)), n, round(cmax, 3))
-        for cid, (n, cmax) in agg.items()
-    ]
-
-
-if __name__ == "__main__":
-    import sys
-
-    from src.config import ensure_dirs, load_config, setup_logging
-
-    cfg = load_config()
-    setup_logging(cfg.logging_level)
-    ensure_dirs(cfg)
-
-    target = sys.argv[1] if len(sys.argv) > 1 else "tests/fixtures/sample_person.mp4"
-    for e in detect_clip(Path(target), cfg):
-        print(f"  t={e.t_sec:.1f}s  {e.class_name}(#{e.class_id})  n={e.n}  conf={e.conf}")

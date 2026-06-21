@@ -64,10 +64,13 @@ CREATE INDEX IF NOT EXISTS idx_detections_event ON detections(motion_event_id);
 
 def connect(cfg: Config) -> sqlite3.Connection:
     cfg.paths.db.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(cfg.paths.db)
+    # Enable WAL mode and 60-second busy timeout to avoid database lock issues
+    conn = sqlite3.connect(cfg.paths.db, timeout=60.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
     return conn
+
 
 
 def init_db(conn: sqlite3.Connection) -> None:

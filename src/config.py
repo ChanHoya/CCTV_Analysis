@@ -28,14 +28,16 @@ class Paths:
 
 @dataclass(frozen=True)
 class MotionConfig:
-    threshold: float
-    min_event_length: int
+    frame_width: int
+    blur_radius: int
+    threshold: int
+    dilate_iterations: int
+    min_area: int
+    min_event_length: str
     time_before_event: float
     time_post_event: float
+    merge_gap_sec: float = 30.0  # 이 간격(초) 미만 연속 이벤트를 하나로 병합
     regions: list[list[int]] = field(default_factory=list)
-    kernel_size: int = -1
-    downscale_factor: int = 0
-    bg_subtractor: str = "MOG2"
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,7 @@ class DetectConfig:
     classes: list[int]
     conf: float
     device: str
+    require_detection: bool = True  # YOLO 확인 없는 이벤트 폐기 여부
 
 
 @dataclass(frozen=True)
@@ -108,14 +111,16 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> Config:
 
     m = _require(raw, "motion", "root")
     motion = MotionConfig(
-        threshold=float(_require(m, "threshold", "motion")),
-        min_event_length=int(_require(m, "min_event_length", "motion")),
+        frame_width=int(_require(m, "frame_width", "motion")),
+        blur_radius=int(_require(m, "blur_radius", "motion")),
+        threshold=int(_require(m, "threshold", "motion")),
+        dilate_iterations=int(_require(m, "dilate_iterations", "motion")),
+        min_area=int(_require(m, "min_area", "motion")),
+        min_event_length=str(_require(m, "min_event_length", "motion")),
         time_before_event=float(_require(m, "time_before_event", "motion")),
         time_post_event=float(_require(m, "time_post_event", "motion")),
+        merge_gap_sec=float(m.get("merge_gap_sec", 30.0)),
         regions=list(m.get("regions", []) or []),
-        kernel_size=int(m.get("kernel_size", -1)),
-        downscale_factor=int(m.get("downscale_factor", 0)),
-        bg_subtractor=str(m.get("bg_subtractor", "MOG2")),
     )
 
     d = _require(raw, "detect", "root")
@@ -125,6 +130,7 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> Config:
         classes=[int(c) for c in _require(d, "classes", "detect")],
         conf=float(_require(d, "conf", "detect")),
         device=str(_require(d, "device", "detect")),
+        require_detection=bool(d.get("require_detection", True)),
     )
     if detect.sample_fps <= 0:
         raise ConfigError("[detect] sample_fps는 0보다 커야 함")
