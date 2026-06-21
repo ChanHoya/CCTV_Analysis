@@ -296,19 +296,23 @@ with main_col:
                 conn.close()
             else:
                 # ── 썸네일 그리드 ──
-                THUMB_COLS = 5
+                THUMB_COLS = 7
                 st.markdown(f"**모션 클립 {len(events)}개** — 클릭하면 재생합니다")
                 for row in [events[i:i+THUMB_COLS] for i in range(0, len(events), THUMB_COLS)]:
-                    cols = st.columns(len(row))
+                    cols = st.columns(THUMB_COLS)  # 7개 고정 컬럼으로 가로폭 축소 및 비율 유지
                     for col, ev in zip(cols, row):
                         idx    = events.index(ev)
                         is_sel = idx == st.session_state.selected_event_idx
-                        thumb  = ev.get("thumbnail_path") if isinstance(ev, dict) else None
+                        ev_dict = dict(ev)  # sqlite3.Row -> dict 변환으로 썸네일 유실 차단
+                        thumb  = ev_dict.get("thumbnail_path")
                         with col:
                             if thumb and Path(thumb).exists():
                                 st.image(str(thumb), use_container_width=True, caption=None)
                             else:
-                                st.markdown("<div style='background:#1e293b;height:80px;border-radius:4px;"
+                                # 실제 영상 비율과 일치하도록 aspect-ratio 적용
+                                vw = video.get("width", 4) or 4
+                                vh = video.get("height", 3) or 3
+                                st.markdown(f"<div style='background:#1e293b;aspect-ratio:{vw}/{vh};border-radius:4px;"
                                             "display:flex;align-items:center;justify-content:center;"
                                             "color:#475569;font-size:1.5rem;'>🎞️</div>",
                                             unsafe_allow_html=True)
