@@ -124,10 +124,28 @@ def process_file(
             logger.info("움직이는 객체 없음 — 건너뜀: %.1f~%.1fs", start_sec, end_sec)
             continue
 
-        # 썸네일: 구간 중간 프레임
-        mid = (start_sec + end_sec) / 2
+        # ── 대표 썸네일 타임스탬프 계산 (객체가 가장 많고 신뢰도가 높은 프레임) ──
+        best_absolute_sec = (start_sec + end_sec) / 2
+        if dets:
+            from collections import defaultdict
+            frame_scores = defaultdict(lambda: {"n_sum": 0, "conf_max": 0.0})
+            for d in dets:
+                frame_scores[d.t_sec]["n_sum"] += d.n
+                frame_scores[d.t_sec]["conf_max"] = max(frame_scores[d.t_sec]["conf_max"], d.conf)
+
+            if frame_scores:
+                best_t_sec = max(
+                    frame_scores.keys(),
+                    key=lambda t: (frame_scores[t]["n_sum"], frame_scores[t]["conf_max"])
+                )
+                best_absolute_sec = start_sec + best_t_sec
+                logger.info("대표 썸네일 선정: %.2fs (상대 %.2fs, 객체수=%d, conf=%.3f)",
+                            best_absolute_sec, best_t_sec,
+                            frame_scores[best_t_sec]["n_sum"],
+                            frame_scores[best_t_sec]["conf_max"])
+
         thumb_dest = cfg.paths.thumbs / f"{path.stem}_{int(start_sec * 10):09d}.jpg"
-        _extract_thumb(path, mid, thumb_dest)
+        _extract_thumb(path, best_absolute_sec, thumb_dest)
 
         clip = MotionClip(
             clip_path=path,                                        # 원본 영상 경로
