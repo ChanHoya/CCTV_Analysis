@@ -4,7 +4,6 @@ version = "0.1.0"
 description = "Local-first CCTV motion extraction + object detection (DVR-Scan + YOLO cascade)"
 requires-python = ">=3.11"
 dependencies = [
-    "dvr-scan[opencv]>=1.6",
     "ultralytics>=8.3",
     "opencv-python-headless>=4.10",
     "pyyaml>=6.0",

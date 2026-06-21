@@ -1,5 +1,4 @@
 # 런타임 의존성 (pyproject.toml과 동기화). Docker/재현 설치용.
-dvr-scan[opencv]>=1.6
 ultralytics>=8.3
 opencv-python-headless>=4.10
 pyyaml>=6.0
